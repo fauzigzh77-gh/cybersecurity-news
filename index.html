@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI × Cybersecurity — Live News Feed</title>
+  <style>
+    :root{
+      --bg:#0f1724; --card:#0b1220; --muted:#98a0b3; --accent:#00a3ff;
+      --glass: rgba(255,255,255,0.03);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+    }
+    html,body{height:100%; margin:0; background:linear-gradient(180deg,#071025 0%, #071021 60%); color:#e6eef8}
+    .container{max-width:1100px; margin:28px auto; padding:22px;}
+    header{display:flex; gap:16px; align-items:center; justify-content:space-between; margin-bottom:18px}
+    h1{font-size:20px; margin:0; color:var(--accent)}
+    .sub{color:var(--muted); font-size:13px}
+    .controls{display:flex; gap:8px; align-items:center}
+    input[type="search"]{
+      padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.05);
+      background:var(--glass); color:inherit; outline:none; min-width:220px;
+    }
+    button{
+      padding:10px 12px; border-radius:10px; border:none; cursor:pointer;
+      background:linear-gradient(180deg,#0b78a8,#00658f); color:#fff;
+    }
+    main{display:grid; grid-template-columns: 1fr; gap:14px}
+    .grid{display:grid; grid-template-columns: repeat(auto-fill,minmax(280px,1fr)); gap:14px}
+    .card{
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      padding:14px; border-radius:12px; box-shadow: 0 6px 18px rgba(2,6,23,0.6);
+      border:1px solid rgba(255,255,255,0.02);
+      display:flex; flex-direction:column; gap:8px;
+    }
+    .meta{display:flex; justify-content:space-between; font-size:12px; color:var(--muted)}
+    .title{font-weight:600; font-size:15px; color:#eaf6ff}
+    .excerpt{color:#c8d6e8; font-size:13px}
+    .source{font-weight:600; color:var(--accent); text-decoration:none}
+    .footer-actions{display:flex; gap:8px; margin-top:10px}
+    .pill{padding:6px 8px; background:rgba(0,0,0,0.18); border-radius:999px; font-size:12px; color:var(--muted)}
+    .spinner{width:18px;height:18px;border:3px solid rgba(255,255,255,0.08); border-top-color:var(--accent); border-radius:50%; animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .empty{padding:24px; border-radius:10px; background:rgba(255,255,255,0.02); color:var(--muted); text-align:center}
+    footer{margin-top:18px; color:var(--muted); font-size:13px; text-align:center}
+    @media (max-width:640px){header{flex-direction:column;align-items:flex-start;gap:10px}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>AI × Cybersecurity — Live News Feed</h1>
+        <div class="sub">Auto-aggregated AI-related cybersecurity articles from multiple feeds. Updates automatically.</div>
+      </div>
+
+      <div class="controls" aria-hidden="false">
+        <input id="search" type="search" placeholder="Search titles / keywords (e.g. 'deepfake', 'ransomware')">
+        <button id="refreshBtn" title="Refresh feeds">Refresh</button>
+        <div id="status" style="display:flex;align-items:center;gap:8px">
+          <div id="spinner" class="spinner" style="display:none"></div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section aria-labelledby="feeds" class="feeds">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div style="color:var(--muted);font-size:13px">Showing AI-related items</div>
+          <div style="font-size:13px;color:var(--muted)">Auto-refresh: <span id="autoref">Off</span></div>
+        </div>
+
+        <div id="grid" class="grid"></div>
+        <div id="empty" class="empty" style="display:none">No AI-related items found. Try refresh or change keywords.</div>
+
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">
+          <button id="loadMore" style="display:none">Load more</button>
+          <button id="toggleAuto">Enable Auto-refresh</button>
+        </div>
+      </section>
+
+      <footer>
+        <div>Feeds used (configurable in the script): GBHackers, The Hacker News, DarkReading, Krebs — you can add your own RSS links.</div>
+        <div style="margin-top:8px">If browser blocks feeds due to CORS, deploy a tiny proxy (Cloudflare Worker / Netlify Function) or use the rss2json endpoint included.</div>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+/*
+  Dynamic AI × Cybersecurity News Feed (Client-side)
+  - Feeds list is configurable below.
+  - Primary proxy used: rss2json (free/demo). Fallback: allorigins proxy.
+  - Filtering: keyword-based on title/description.
+  - To avoid CORS/rate-limit problems in production, host a small proxy endpoint (Cloudflare Worker or Netlify function)
+    that fetches the RSS and returns JSON to client.
+*/
+
+const FEEDS = [
+  // Example RSS feeds (you can add / replace)
+  {url: 'https://gbhackers.com/category/cyber-attack/feed/', label: 'GBHackers — Cyber Attacks'},
+  {url: 'https://thehackernews.com/feeds/posts/default?alt=rss', label: 'The Hacker News'},
+  {url: 'https://www.darkreading.com/rss.xml', label: 'DarkReading'},
+  {url: 'https://krebsonsecurity.com/feed/', label: 'KrebsOnSecurity'}
+];
+
+// keywords to identify AI-related cybersecurity items
+const KEYWORDS = ['ai','artificial intelligence','machine learning','ml','deepfake','llm','large language model','gpt','model poisoning','adversarial'];
+
+// proxies
+const RSS2JSON = 'https://api.rss2json.com/v1/api.json?rss_url=';
+const ALLORIGINS = 'https://api.allorigins.win/raw?url='; // returns raw content (XML) - safer fallback
+
+// UI refs
+const grid = document.getElementById('grid');
+const spinner = document.getElementById('spinner');
+const empty = document.getElementById('empty');
+const searchBox = document.getElementById('search');
+const refreshBtn = document.getElementById('refreshBtn');
+const loadMoreBtn = document.getElementById('loadMore');
+const toggleAutoBtn = document.getElementById('toggleAuto');
+const autorefSpan = document.getElementById('autoref');
+
+let items = [];         // aggregated items
+let page = 0;
+const PAGE_SIZE = 20;
+let autoRefresh = false;
+let autoTimer = null;
+
+function showSpinner(show){
+  spinner.style.display = show ? 'inline-block' : 'none';
+}
+
+function parseRSSXmlToItems(xmlString, feedLabel){
+  // parse XML to items (works for most RSS/Atom formats)
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlString, 'application/xml');
+  const isRss = !!doc.querySelector('rss');
+  const entries = isRss ? [...doc.querySelectorAll('item')] : [...doc.querySelectorAll('entry')];
+  const results = entries.map(e => {
+    const title = (e.querySelector('title') && e.querySelector('title').textContent) || 'No title';
+    const linkEl = e.querySelector('link');
+    let link = '';
+    if (linkEl) {
+      // Atom <link href="">
+      link = linkEl.getAttribute('href') || linkEl.textContent || '';
+    }
+    if (!link) {
+      const guid = e.querySelector('guid');
+      link = guid ? guid.textContent : '';
+    }
+    const pubDate = (e.querySelector('pubDate') && e.querySelector('pubDate').textContent) ||
+                    (e.querySelector('published') && e.querySelector('published').textContent) ||
+                    (e.querySelector('updated') && e.querySelector('updated').textContent) || '';
+    const description = (e.querySelector('description') && e.querySelector('description').textContent) ||
+                        (e.querySelector('summary') && e.querySelector('summary').textContent) ||
+                        '';
+    return { title: title.trim(), link: link.trim(), pubDate: pubDate.trim(), description: description.trim(), source: feedLabel };
+  });
+  return results;
+}
+
+async function fetchFeedViaRss2Json(feed){
+  // tries rss2json (returns JSON)
+  const u = RSS2JSON + encodeURIComponent(feed.url);
+  const resp = await fetch(u);
+  if (!resp.ok) throw new Error('rss2json failed');
+  const data = await resp.json();
+  // rss2json returns items array with {title, link, pubDate, description}
+  return (data.items || []).map(i => ({
+    title: i.title || '',
+    link: i.link || '',
+    pubDate: i.pubDate || i.pubDate_ms || '',
+    description: i.description || i.content || '',
+    source: feed.label || data.feed?.title || feed.url
+  }));
+}
+
+async function fetchFeedViaAllOrigins(feed){
+  // fetch raw XML then parse
+  const u = ALLORIGINS + encodeURIComponent(feed.url);
+  const resp = await fetch(u);
+  if (!resp.ok) throw new Error('allorigins failed');
+  const xml = await resp.text();
+  return parseRSSXmlToItems(xml, feed.label);
+}
+
+async function fetchFeed(feed){
+  // try rss2json first, fall back to allorigins XML parse
+  try {
+    return await fetchFeedViaRss2Json(feed);
+  } catch(e){
+    try {
+      return await fetchFeedViaAllOrigins(feed);
+    } catch(e2){
+      console.warn('feed failed', feed.url, e, e2);
+      return [];
+    }
+  }
+}
+
+function containsKeyword(text){
+  if(!text) return false;
+  const t = text.toLowerCase();
+  return KEYWORDS.some(k => t.includes(k));
+}
+
+function filterAiItems(arr){
+  // include if any keyword in title or description
+  return arr.filter(it => containsKeyword(it.title) || containsKeyword(it.description));
+}
+
+function dedupeByLink(arr){
+  const seen = new Set();
+  return arr.filter(i => {
+    const id = (i.link || i.title).slice(0, 240);
+    if(seen.has(id)) return false;
+    seen.add(id); return true;
+  });
+}
+
+function renderCards(showItems){
+  grid.innerHTML = '';
+  if(!showItems.length){
+    empty.style.display = 'block';
+    loadMoreBtn.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  const toShow = showItems.slice(0, (page+1)*PAGE_SIZE);
+  toShow.forEach(it => {
+    const d = document.createElement('article');
+    d.className = 'card';
+    const date = it.pubDate ? (new Date(it.pubDate)).toLocaleString() : '';
+    d.innerHTML = `
+      <div class="meta"><div class="source">${escapeHtml(it.source)}</div><div>${escapeHtml(date)}</div></div>
+      <div class="title"><a href="${escapeAttr(it.link)}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none">${escapeHtml(it.title)}</a></div>
+      <div class="excerpt">${escapeHtml(truncateText(stripHtml(it.description), 240))}</div>
+      <div class="footer-actions">
+        <div class="pill">${escapeHtml(it.source.replace(/\\s*—.*$/,''))}</div>
+        <a class="pill" href="${escapeAttr(it.link)}" target="_blank" rel="noopener noreferrer">Read original</a>
+      </div>
+    `;
+    grid.appendChild(d);
+  });
+
+  if(showItems.length > (page+1)*PAGE_SIZE){
+    loadMoreBtn.style.display = 'inline-block';
+  } else {
+    loadMoreBtn.style.display = 'none';
+  }
+}
+
+function stripHtml(html){
+  if(!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || tmp.innerText || '';
+}
+
+function truncateText(str, n){
+  return str.length > n ? str.slice(0,n-1) + '…' : str;
+}
+
+function escapeHtml(s){ return s ? s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;') : ''; }
+function escapeAttr(s){ return s ? s.replaceAll('"','%22').replaceAll("'",'%27') : ''; }
+
+async function loadFeeds(){
+  showSpinner(true);
+  refreshBtn.disabled = true;
+  try {
+    // fetch all feeds in parallel
+    const promises = FEEDS.map(f => fetchFeed(f));
+    const results = await Promise.all(promises);
+    const flat = results.flat();
+    // filter AI items
+    let ai = filterAiItems(flat);
+    // if AI keywords produced none, as fallback include recent items but scored by keyword presence
+    if(ai.length === 0){
+      // optional: include any item that mentions "security" + "ai" lesser strict. For now we'll keep zero state.
+    }
+    const deduped = dedupeByLink(ai);
+    // sort by date descending (best-effort)
+    deduped.sort((a,b) => {
+      const da = Date.parse(a.pubDate) || 0;
+      const db = Date.parse(b.pubDate) || 0;
+      return db - da;
+    });
+    items = deduped;
+    page = 0;
+    applySearchFilter();
+  } catch(e){
+    console.error('loadFeeds error', e);
+    items = [];
+    renderCards(items);
+  } finally {
+    showSpinner(false);
+    refreshBtn.disabled = false;
+  }
+}
+
+function applySearchFilter(){
+  const q = (searchBox.value || '').trim().toLowerCase();
+  if(!q){
+    renderCards(items);
+  } else {
+    const filtered = items.filter(it => (it.title + ' ' + it.description + ' ' + it.source).toLowerCase().includes(q));
+    renderCards(filtered);
+  }
+}
+
+refreshBtn.addEventListener('click', () => { loadFeeds(); });
+searchBox.addEventListener('input', () => { applySearchFilter(); });
+loadMoreBtn.addEventListener('click', () => { page++; applySearchFilter(); });
+
+toggleAutoBtn.addEventListener('click', () => {
+  autoRefresh = !autoRefresh;
+  toggleAutoBtn.textContent = autoRefresh ? 'Disable Auto-refresh' : 'Enable Auto-refresh';
+  autorefSpan.textContent = autoRefresh ? 'On (every 5m)' : 'Off';
+  if(autoRefresh){
+    // refresh immediately then set interval
+    loadFeeds();
+    autoTimer = setInterval(loadFeeds, 1000 * 60 * 5);
+  } else {
+    clearInterval(autoTimer);
+    autoTimer = null;
+  }
+});
+
+// initial load
+loadFeeds();
+
+/* Helpful notes for deployment:
+  - Browser CORS: Some RSS origins block direct browser fetch. rss2json is used as primary proxy above.
+    For production, prefer deploying a tiny proxy you control:
+      * Cloudflare Worker (fetch the feed and return JSON)
+      * Netlify / Vercel serverless function
+    Example Cloudflare Worker (very small):
+      addEventListener('fetch', event => {
+        const url = new URL(event.request.url);
+        const feed = url.searchParams.get('feed'); // feed url
+        return event.respondWith(fetch(feed).then(r => r.text()).then(txt => new Response(txt, {headers:{'content-type':'text/xml'}})));
+      });
+  - To add more feeds: edit FEEDS array at top.
+  - To relax filtering: adjust KEYWORDS array.
+*/
+
+  </script>
+</body>
+</html>
